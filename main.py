@@ -2,16 +2,18 @@ import json
 import os
 from datetime import datetime
 from kivy.app import App
+from kivy.core.window import Window
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.label import Label
 from kivy.uix.button import Button
 from kivy.uix.checkbox import CheckBox
-from kivy.uix.progressbar import ProgressBar
 from kivy.uix.textinput import TextInput
 from kivy.uix.spinner import Spinner
+from kivy.uix.widget import Widget
 from kivy.utils import get_color_from_hex
+from kivy.graphics import Color, Rectangle, RoundedRectangle
 
 
 def kh(hex_str):
@@ -21,6 +23,16 @@ def kh(hex_str):
         return get_color_from_hex(hex_str)
     return [0.5, 0.5, 0.5, 1]
 
+
+BG = "#F1F5F9"
+CARD = "#FFFFFF"
+TEXT_DARK = "#1E293B"
+TEXT_MUTED = "#64748B"
+INDIGO = "#6366F1"
+INDIGO_LIGHT = "#E0E7FF"
+BORDER = "#E2E8F0"
+RED = "#EF4444"
+GREEN = "#22C55E"
 
 PALETTE = ["#3B82F6", "#8B5CF6", "#EC4899", "#F97316", "#14B8A6", "#EF4444",
            "#EAB308", "#22C55E"]
@@ -43,75 +55,150 @@ DEFAULT_DATA = {
 }
 
 
+class Card(BoxLayout):
+    def __init__(self, bg_hex=CARD, radius=16, **kwargs):
+        super().__init__(**kwargs)
+        with self.canvas.before:
+            Color(*kh(bg_hex))
+            self._rect = RoundedRectangle(radius=[radius])
+        self.bind(pos=self._update_rect, size=self._update_rect)
+
+    def _update_rect(self, *args):
+        self._rect.pos = self.pos
+        self._rect.size = self.size
+
+
+class ColorBar(Widget):
+    def __init__(self, color_hex, **kwargs):
+        kwargs.setdefault("size_hint_x", None)
+        kwargs.setdefault("width", 6)
+        super().__init__(**kwargs)
+        with self.canvas.before:
+            Color(*kh(color_hex))
+            self._rect = Rectangle(pos=self.pos, size=self.size)
+        self.bind(pos=self._update, size=self._update)
+
+    def _update(self, *args):
+        self._rect.pos = self.pos
+        self._rect.size = self.size
+
+
+class ProgressTrack(Widget):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.pct = 0
+        with self.canvas.before:
+            Color(*kh(BORDER))
+            self._track = RoundedRectangle(radius=[10])
+            Color(*kh(INDIGO))
+            self._fill = RoundedRectangle(radius=[10])
+        self.bind(pos=self._redraw, size=self._redraw)
+
+    def set_pct(self, pct):
+        self.pct = max(0, min(100, pct))
+        self._redraw()
+
+    def _redraw(self, *args):
+        r = self.height / 2 if self.height else 10
+        self._track.radius = [r]
+        self._track.pos = self.pos
+        self._track.size = self.size
+        fill_w = self.size[0] * (self.pct / 100)
+        self._fill.radius = [r]
+        self._fill.pos = self.pos
+        self._fill.size = (fill_w, self.size[1])
+
+
+def flat_button(text, **kwargs):
+    kwargs.setdefault("background_normal", "")
+    kwargs.setdefault("background_down", "")
+    kwargs.setdefault("color", kh("#FFFFFF"))
+    return Button(text=text, **kwargs)
+
+
 class ChapterTrackerApp(App):
     def build(self):
         self.title = "Chapter Notes Tracker"
+        Window.clearcolor = kh(BG)
         self.load_data()
         self.status_filter = "all"
         self.subject_filter = None
+        self.filter_buttons = {}
 
-        self.root = BoxLayout(orientation='vertical', padding=20, spacing=15)
+        self.root = BoxLayout(orientation='vertical', padding=16, spacing=14)
 
-        header = BoxLayout(orientation='horizontal', size_hint_y=None, height=60)
+        header = BoxLayout(orientation='horizontal', size_hint_y=None, height=64)
         title_box = BoxLayout(orientation='vertical')
         title_box.add_widget(Label(text="STUDY TRACKER", font_size=12, bold=True,
-                                    color=kh("#6366F1"), halign='left',
-                                    size_hint_x=None, width=200))
+                                    color=kh(INDIGO), halign='left', valign='bottom',
+                                    size_hint_x=None, width=220))
         self.main_title = Label(text="Chapter Notes", font_size=26, bold=True,
-                                 color=kh("#1E293B"), halign='left',
-                                 size_hint_x=None, width=200)
+                                 color=kh(TEXT_DARK), halign='left', valign='top',
+                                 size_hint_x=None, width=220)
         title_box.add_widget(self.main_title)
         header.add_widget(title_box)
 
-        self.stats_label = Label(text="0/0\ndone", font_size=14, color=kh("#1E293B"),
-                                  bold=True, size_hint_x=None, width=80)
-        header.add_widget(self.stats_label)
+        stats_card = Card(bg_hex=INDIGO_LIGHT, radius=14, orientation='vertical',
+                           size_hint=(None, None), size=(72, 56), padding=4)
+        self.stats_label = Label(text="0/0\ndone", font_size=13, color=kh(INDIGO),
+                                  bold=True, halign='center')
+        stats_card.add_widget(self.stats_label)
+        header.add_widget(stats_card)
         self.root.add_widget(header)
 
         progress_box = BoxLayout(orientation='horizontal', size_hint_y=None,
-                                  height=30, spacing=10)
-        self.progress_bar = ProgressBar(max=100, value=0, size_hint_x=0.8)
-        self.progress_pct = Label(text="0%", font_size=14, color=kh("#64748B"),
-                                   bold=True, size_hint_x=0.2)
+                                  height=22, spacing=10)
+        self.progress_bar = ProgressTrack(size_hint_x=0.85)
+        self.progress_pct = Label(text="0%", font_size=14, color=kh(TEXT_MUTED),
+                                   bold=True, size_hint_x=0.15)
         progress_box.add_widget(self.progress_bar)
         progress_box.add_widget(self.progress_pct)
         self.root.add_widget(progress_box)
 
-        filter_box = BoxLayout(orientation='horizontal', size_hint_y=None,
-                                height=40, spacing=5)
-        filter_box.add_widget(Button(text="All",
-                                      on_press=lambda x: self.set_status_filter("all"),
-                                      background_color=kh("#1E293B")))
-        filter_box.add_widget(Button(text="Pending",
-                                      on_press=lambda x: self.set_status_filter("pending"),
-                                      background_color=kh("#64748B")))
-        filter_box.add_widget(Button(text="Done",
-                                      on_press=lambda x: self.set_status_filter("done"),
-                                      background_color=kh("#64748B")))
-        filter_box.add_widget(Button(text="Reset", on_press=self.reset_all,
-                                      background_color=kh("#EF4444"), size_hint_x=0.25))
-        self.root.add_widget(filter_box)
+        filter_card = Card(bg_hex=CARD, radius=14, orientation='horizontal',
+                            size_hint_y=None, height=44, spacing=6, padding=4)
+        for key, label in (("all", "All"), ("pending", "Pending"), ("done", "Done")):
+            btn = flat_button(label, on_press=lambda x, k=key: self.set_status_filter(k))
+            self.filter_buttons[key] = btn
+            filter_card.add_widget(btn)
+        reset_btn = flat_button("Reset", on_press=self.reset_all,
+                                 background_color=kh(RED), size_hint_x=0.5)
+        filter_card.add_widget(reset_btn)
+        self.root.add_widget(filter_card)
+        self._update_filter_styles()
 
-        add_box = BoxLayout(orientation='vertical', size_hint_y=None, height=130, spacing=5)
-        inputs_row = BoxLayout(orientation='horizontal', spacing=5, size_hint_y=None, height=40)
-        self.title_input = TextInput(hint_text="Chapter title", multiline=False)
-        self.subtitle_input = TextInput(hint_text="Subtitle (optional)", multiline=False)
+        add_card = Card(bg_hex=CARD, radius=16, orientation='vertical',
+                         size_hint_y=None, height=160, spacing=8, padding=12)
+        inputs_row = BoxLayout(orientation='horizontal', spacing=8, size_hint_y=None, height=42)
+        self.title_input = TextInput(hint_text="Chapter title", multiline=False,
+                                      background_color=kh("#F8FAFC"),
+                                      foreground_color=kh(TEXT_DARK),
+                                      hint_text_color=kh(TEXT_MUTED), padding=[10, 10, 10, 10])
+        self.subtitle_input = TextInput(hint_text="Subtitle (optional)", multiline=False,
+                                         background_color=kh("#F8FAFC"),
+                                         foreground_color=kh(TEXT_DARK),
+                                         hint_text_color=kh(TEXT_MUTED), padding=[10, 10, 10, 10])
         inputs_row.add_widget(self.title_input)
         inputs_row.add_widget(self.subtitle_input)
-        add_box.add_widget(inputs_row)
+        add_card.add_widget(inputs_row)
 
-        meta_row = BoxLayout(orientation='horizontal', spacing=5, size_hint_y=None, height=40)
+        meta_row = BoxLayout(orientation='horizontal', spacing=8, size_hint_y=None, height=42)
         self.subject_spinner = Spinner(text="Select Subject",
-                                        values=[s["name"] for s in self.data["subjects"]])
-        self.deadline_input = TextInput(hint_text="YYYY-MM-DD", multiline=False)
+                                        values=[s["name"] for s in self.data["subjects"]],
+                                        background_normal='', background_down='',
+                                        background_color=kh("#F8FAFC"), color=kh(TEXT_DARK))
+        self.deadline_input = TextInput(hint_text="YYYY-MM-DD", multiline=False,
+                                         background_color=kh("#F8FAFC"),
+                                         foreground_color=kh(TEXT_DARK),
+                                         hint_text_color=kh(TEXT_MUTED), padding=[10, 10, 10, 10])
         meta_row.add_widget(self.subject_spinner)
         meta_row.add_widget(self.deadline_input)
-        add_box.add_widget(meta_row)
+        add_card.add_widget(meta_row)
 
-        add_btn = Button(text="+ Add Chapter", on_press=self.add_chapter,
-                          background_color=kh("#22C55E"), size_hint_y=None, height=35)
-        add_box.add_widget(add_btn)
-        self.root.add_widget(add_box)
+        add_btn = flat_button("+ Add Chapter", on_press=self.add_chapter,
+                               background_color=kh(GREEN), size_hint_y=None, height=38)
+        add_card.add_widget(add_btn)
+        self.root.add_widget(add_card)
 
         self.scroll_view = ScrollView()
         self.grid_layout = GridLayout(cols=1, spacing=10, size_hint_y=None)
@@ -121,6 +208,15 @@ class ChapterTrackerApp(App):
 
         self.refresh_ui()
         return self.root
+
+    def _update_filter_styles(self):
+        for key, btn in self.filter_buttons.items():
+            if key == self.status_filter:
+                btn.background_color = kh(INDIGO)
+                btn.color = kh("#FFFFFF")
+            else:
+                btn.background_color = kh("#F1F5F9")
+                btn.color = kh(TEXT_DARK)
 
     def load_data(self):
         self.storage_file = "chapter_tracker_data.json"
@@ -139,6 +235,7 @@ class ChapterTrackerApp(App):
 
     def set_status_filter(self, status):
         self.status_filter = status
+        self._update_filter_styles()
         self.refresh_ui()
 
     def reset_all(self, instance):
@@ -201,7 +298,7 @@ class ChapterTrackerApp(App):
         pct = round((done_count / total_count) * 100) if total_count > 0 else 0
 
         self.stats_label.text = f"{done_count}/{total_count}\ndone"
-        self.progress_bar.value = pct
+        self.progress_bar.set_pct(pct)
         self.progress_pct.text = f"{pct}%"
 
         for c in chapters:
@@ -211,11 +308,13 @@ class ChapterTrackerApp(App):
                 continue
 
             sub = next((s for s in subjects if s["id"] == c["subject"]), None)
-            sub_color = kh(sub["color"]) if sub else kh("#CBD5E1")
+            sub_color = sub["color"] if sub else "#CBD5E1"
             sub_name = sub["name"] if sub else "No Subject"
 
-            row = BoxLayout(orientation='horizontal', size_hint_y=None, height=70,
-                             spacing=10, padding=5)
+            row = Card(bg_hex=CARD, radius=14, orientation='horizontal',
+                       size_hint_y=None, height=72, spacing=10, padding=[0, 8, 8, 8])
+
+            row.add_widget(ColorBar(sub_color))
 
             cb = CheckBox(active=c["done"], size_hint_x=None, width=40)
             cb.bind(active=lambda instance, value, cid=c["id"]:
@@ -225,19 +324,19 @@ class ChapterTrackerApp(App):
             info_box = BoxLayout(orientation='vertical')
             title_text = f"[b]{c['title']}[/b] ({sub_name})"
             if c["subtitle"]:
-                title_text += f"\n[size=12]{c['subtitle']}[/size]"
+                title_text += f"\n[size=12][color=64748B]{c['subtitle']}[/color][/size]"
             if c["deadline"]:
-                title_text += f" - [size=12]Due: {c['deadline']}[/size]"
+                title_text += f" - [size=12][color=64748B]Due: {c['deadline']}[/color][/size]"
 
-            info_lbl = Label(text=title_text, markup=True, color=kh("#1E293B"),
+            info_lbl = Label(text=title_text, markup=True, color=kh(TEXT_DARK),
                               halign='left', valign='middle')
             info_lbl.bind(size=info_lbl.setter('text_size'))
             info_box.add_widget(info_lbl)
             row.add_widget(info_box)
 
-            del_btn = Button(text="X", size_hint_x=None, width=40,
-                              background_color=kh("#EF4444"),
-                              on_press=lambda x, cid=c["id"]: self.delete_chapter(cid))
+            del_btn = flat_button("X", size_hint_x=None, width=40,
+                                   background_color=kh(RED),
+                                   on_press=lambda x, cid=c["id"]: self.delete_chapter(cid))
             row.add_widget(del_btn)
 
             self.grid_layout.add_widget(row)
